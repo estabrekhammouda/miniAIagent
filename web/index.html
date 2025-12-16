@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Agent with Memory</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div class="chat-container">
+    <div class="header">
+        <h2>🧠 AI Agent with Memory</h2>
+        <div class="header-actions">
+            <button class="icon-btn" onclick="showHelp()" title="Show help">
+                ❓
+            </button>
+            <button class="icon-btn" onclick="showStats()" title="Conversation stats">
+                📊
+            </button>
+            <button class="icon-btn danger" onclick="clearChat()" title="Clear conversation">
+                🗑️
+            </button>
+        </div>
+    </div>
+    
+    <div class="help-banner" id="helpBanner">
+        <span>Type <code>help</code> or <code>tools</code> to see available commands</span>
+        <button class="close-btn" onclick="closeHelp()">✕</button>
+    </div>
+    
+    <div id="log" class="chat-log"></div>
+    
+    <div class="input-container">
+        <textarea 
+            id="input" 
+            placeholder="Type a message..." 
+            rows="1"
+            maxlength="2000"
+        ></textarea>
+        <button id="sendBtn" onclick="send()">
+            <span class="send-icon">➤</span>
+        </button>
+    </div>
+    
+    <div id="status" class="status"></div>
+    
+    <div class="footer-info">
+        <span id="charCount">0 / 2000</span>
+        <span class="separator">•</span>
+        <span id="sessionInfo">New session</span>
+    </div>
+</div>
+
+<!-- Modal for stats -->
+<div id="statsModal" class="modal">
+    <div class="modal-content">
+        <span class="modal-close" onclick="closeStatsModal()">&times;</span>
+        <div id="statsContent"></div>
+    </div>
+</div>
+
+<script>
+const input = document.getElementById("input");
+const log = document.getElementById("log");
+const sendBtn = document.getElementById("sendBtn");
+const status = document.getElementById("status");
+const charCount = document.getElementById("charCount");
+const sessionInfo = document.getElementById("sessionInfo");
+const helpBanner = document.getElementById("helpBanner");
+
+let messageCount = 0;
+let sessionStartTime = Date.now();
+
+// Auto-resize textarea
+input.addEventListener('input', function() {
+    this.style.height = 'auto';
+    this.style.height = (this.scrollHeight) + 'px';
+    
+    // Update character count
+    const count = this.value.length;
+    charCount.textContent = `${count} / 2000`;
+    charCount.style.color = count > 1800 ? '#ef4444' : '#94a3b8';
+});
+
+// Send with Enter (Shift+Enter for new line)
+input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
+        send();
+    }
+});
+
+// Auto-focus input
+input.focus();
+
+// Close help banner after 10 seconds
+setTimeout(() => {
+    if (helpBanner.style.display !== 'none') {
+        helpBanner.style.opacity = '0';
+        setTimeout(() => helpBanner.style.display = 'none', 300);
+    }
+}, 10000);
+
+function closeHelp() {
+    helpBanner.style.opacity = '0';
+    setTimeout(() => helpBanner.style.display = 'none', 300);
+}
+
+function showHelp() {
+    send('help');
+}
+
+async function showStats() {
+    const response = await sendToBackend('summary');
+    if (response) {
+        showStatsModal(response);
+    }
+}
+
+function showStatsModal(content) {
+    const modal = document.getElementById('statsModal');
+    const statsContent = document.getElementById('statsContent');
+    statsContent.innerHTML = `<pre>${escapeHtml(content)}</pre>`;
+    modal.style.display = 'block';
+}
+
+function closeStatsModal() {
+    document.getElementById('statsModal').style.display = 'none';
+}
+
+// Close modal when clicking outside
+window.onclick = function(event) {
+    const modal = document.getElementById('statsModal');
+    if (event.target == modal) {
+        modal.style.display = 'none';
+    }
+}
+
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+function formatMessage(content) {
+    // Basic markdown-like formatting
+    let formatted = escapeHtml(content);
+    
+    // Bold text
+    formatted = formatted.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+    
+    // Code blocks
+    formatted = formatted.replace(/```(\w+)?\n([\s\S]+?)```/g, '<pre><code>$2</code></pre>');
+    
+    // Inline code
+    formatted = formatted.replace(/`([^`]+)`/g, '<code>$1</code>');
+    
+    // Links
+    formatted = formatted.replace(/\[(.*?)\]\((.*?)\)/g, '<a href="$2" target="_blank">$1</a>');
+    
+    // Line breaks
+    formatted = formatted.replace(/\n/g, '<br>');
+    
+    return formatted;
+}
+
+function addMessage(role, content, isError = false) {
+    messageCount++;
+    const msgClass = isError ? 'message error' : 'message';
+    const roleClass = role === 'You' ? 'user' : 'assistant';
+    const timestamp = new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+    
+    const messageDiv = document.createElement('div');
+    messageDiv.className = msgClass;
+    messageDiv.innerHTML = `
+        <div class="message-header">
+            <span class="role ${roleClass}">${role}</span>
+            <span class="timestamp">${timestamp}</span>
+        </div>
+        <div class="content">${formatMessage(content)}</div>
+    `;
+    
+    log.appendChild(messageDiv);
+    log.scrollTop = log.scrollHeight;
+    
+    updateSessionInfo();
+}
+
+function updateSessionInfo() {
+    const elapsed = Math.floor((Date.now() - sessionStartTime) / 1000);
+    const minutes = Math.floor(elapsed / 60);
+    const timeStr = minutes > 0 ? `${minutes}m` : `${elapsed}s`;
+    sessionInfo.textContent = `${messageCount} messages • ${timeStr}`;
+}
+
+function setLoading(loading) {
+    sendBtn.disabled = loading;
+    input.disabled = loading;
+    
+    if (loading) {
+        status.innerHTML = '<span class="typing-indicator"><span></span><span></span><span></span></span>';
+        status.classList.add("active");
+        sendBtn.innerHTML = '<span class="send-icon spinning">⟳</span>';
+    } else {
+        status.textContent = "";
+        status.classList.remove("active");
+        sendBtn.innerHTML = '<span class="send-icon">➤</span>';
+    }
+}
+
+async function sendToBackend(msg) {
+    try {
+        const res = await fetch("/chat", {
+            method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({message: msg})
+        });
+
+        const data = await res.json();
+        
+        if (res.ok) {
+            return data.response;
+        } else {
+            addMessage("Error", data.error || "Unknown error occurred", true);
+            return null;
+        }
+    } catch (error) {
+        addMessage("Error", "Failed to connect to server. Please check your connection.", true);
+        console.error("Request failed:", error);
+        return null;
+    }
+}
+
+async function send(customMsg) {
+    const msg = customMsg || input.value.trim();
+    
+    if (!msg) return;
+    
+    if (!customMsg) {
+        input.value = "";
+        input.style.height = 'auto';
+        charCount.textContent = '0 / 2000';
+    }
+    
+    addMessage("You", msg);
+    setLoading(true);
+
+    const response = await sendToBackend(msg);
+    if (response) {
+        addMessage("Assistant", response);
+    }
+    
+    setLoading(false);
+    input.focus();
+}
+
+async function clearChat() {
+    if (!confirm("Are you sure you want to clear the conversation history?")) {
+        return;
+    }
+    
+    try {
+        const res = await fetch("/clear", {
+            method: "POST",
+            headers: {"Content-Type": "application/json"}
+        });
+        
+        if (res.ok) {
+            log.innerHTML = "";
+            messageCount = 0;
+            sessionStartTime = Date.now();
+            updateSessionInfo();
+            addMessage("System", "Conversation cleared. Starting fresh! 🎉");
+        }
+    } catch (error) {
+        addMessage("Error", "Failed to clear conversation", true);
+    }
+}
+
+// Update session info every 10 seconds
+setInterval(updateSessionInfo, 10000);
+</script>
+
+</body>
+</html>
